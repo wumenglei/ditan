@@ -1,0 +1,6 @@
+{
+  "name": "地毯摆放助手",
+  "description": "专业级 AI 空间布局助手，辅助用户在真实的 3D 模拟场景中预览地毯的摆放效果，支持多维度视角呈现。",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
