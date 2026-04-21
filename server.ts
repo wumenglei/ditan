@@ -35,10 +35,11 @@ const proxyRequest = async (req: express.Request, res: express.Response, targetP
       data: req.body,
       headers: { 'Content-Type': 'application/json' }
     });
+    console.log(`[Proxy Success] ${targetPath} -> Status: ${response.status}`);
     res.status(response.status).json(response.data);
-  } catch (error) {
-    console.error(`SaaS Proxy Error (${targetPath}):`, error);
-    res.status(500).json({ error: "代理转发失败" });
+  } catch (error: any) {
+    console.error(`[Proxy Error] ${targetPath} ->`, error.response?.data || error.message);
+    res.status(error.response?.status || 500).json(error.response?.data || { error: "代理转发失败" });
   }
 };
 

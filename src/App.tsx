@@ -59,21 +59,24 @@ export default function App() {
 
   // Listen for SaaS Initialization
   useEffect(() => {
+    // 1. Signal to parent that we are ready to receive data
+    window.parent.postMessage({ type: 'SAAS_READY' }, '*');
+
     const handleSaaSInit = async (event: MessageEvent) => {
       if (event.data?.type === 'SAAS_INIT') {
         const { userId, toolId, context, prompt } = event.data;
         
-        // Filter "null" or "undefined" strings
-        const cleanUserId = userId === 'null' || userId === 'undefined' ? null : userId;
-        const cleanToolId = toolId === 'null' || toolId === 'undefined' ? null : toolId;
+        // Convert to string and filter placeholders
+        const cleanUserId = userId ? String(userId) : null;
+        const cleanToolId = toolId ? String(toolId) : null;
 
-        if (cleanUserId && cleanToolId) {
+        if (cleanUserId && cleanUserId !== 'null' && cleanUserId !== 'undefined') {
           try {
-            const res = await launchTool(cleanUserId, cleanToolId);
+            const res = await launchTool(cleanUserId, cleanToolId || '');
             if (res.success && res.data) {
               setSaasConfig({
                 userId: cleanUserId,
-                toolId: cleanToolId,
+                toolId: cleanToolId || '',
                 userName: res.data.user.name,
                 integral: res.data.user.integral,
                 requiredIntegral: res.data.tool.integral,
@@ -81,7 +84,7 @@ export default function App() {
               });
             }
           } catch (err) {
-            console.error('SaaS Auth Failed', err);
+            console.error('SaaS Initialization Failed', err);
           }
         }
       }
@@ -147,6 +150,10 @@ export default function App() {
               ...prev, 
               integral: consume.data?.currentIntegral ?? prev.integral 
             }));
+          } else {
+            // If consumption fails after image generation, we should at least log it very clearly
+            console.error('积分扣除失败响应:', consume);
+            setError(`图片已生成，但积分扣除失败: ${consume.message || '未知错误'}`);
           }
         }
       }
@@ -551,6 +558,27 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {/* SaaS Connectivity Bar */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-zinc-100 px-8 py-2 flex items-center justify-between z-[60] shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full transition-all duration-1000 ${saasConfig.userId ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-zinc-300'}`} />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-900">
+              {saasConfig.userId ? 'System Authenticated' : 'Standalone Mode'}
+            </span>
+          </div>
+          {saasConfig.userId && (
+            <div className="flex gap-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest divide-x divide-zinc-100">
+              <span className="pl-0">USER: <span className="text-zinc-900">{saasConfig.userName}</span></span>
+              <span className="pl-5">NODE: <span className="text-zinc-900">SaaS_Btree_Edge</span></span>
+            </div>
+          )}
+        </div>
+        <div className="text-[9px] font-bold text-zinc-200 uppercase tracking-[0.3em]">
+          Secure Proxy Active
+        </div>
+      </div>
     </div>
   );
 }
