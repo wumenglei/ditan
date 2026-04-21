@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { Wand2, Loader2, Maximize, Box, Layers, Focus, Sparkles, ChevronRight, ImageIcon, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Wand2, Loader2, Maximize, Box, Layers, Focus, Sparkles, ChevronRight, ImageIcon, X, User, Coins } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ImageUpload } from './components/ImageUpload';
 import { SettingsPanel } from './components/SettingsPanel';
 import { generateCarpetRendering, GenerationConfig, analyzeRoom, RoomAnalysis } from './lib/gemini';
+import { saasService, SaaSUser, SaaSTool } from './services/saasService';
 
 enum AppStep {
   ROOM_UPLOAD = 'ROOM_UPLOAD',
@@ -21,6 +22,15 @@ interface RenderingResult {
 
 export default function App() {
   const [step, setStep] = useState<AppStep>(AppStep.ROOM_UPLOAD);
+  
+  // SaaS States
+  const [userId, setUserId] = useState<string | null>(null);
+  const [toolId, setToolId] = useState<string | null>(null);
+  const [saasUser, setSaasUser] = useState<SaaSUser | null>(null);
+  const [saasTool, setSaasTool] = useState<SaaSTool | null>(null);
+  const [saasContext, setSaasContext] = useState<string | null>(null);
+  const [saasPrompts, setSaasPrompts] = useState<string[]>([]);
+
   const [roomImage, setRoomImage] = useState<string | null>(null);
   const [carpetImage, setCarpetImage] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<RoomAnalysis>({
@@ -38,6 +48,46 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const [fullscreenImage, setFullscreenImage] = useState<{ url: string, title: string } | null>(null);
+
+  // Filter IDs helper
+  const filterId = (id: any): string | null => {
+    if (!id || id === 'null' || id === 'undefined') return null;
+    return String(id);
+  };
+
+  // Listen for SAAS_INIT
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (data && data.type === 'SAAS_INIT') {
+        const uid = filterId(data.userId);
+        const tid = filterId(data.toolId);
+        if (uid) setUserId(uid);
+        if (tid) setToolId(tid);
+        if (data.context) setSaasContext(data.context);
+        if (Array.isArray(data.prompt)) setSaasPrompts(data.prompt);
+        
+        console.log('SAAS_INIT received:', { uid, tid, context: data.context, prompt: data.prompt });
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  // Launch Effect
+  useEffect(() => {
+    if (userId && toolId) {
+      saasService.launch(userId, toolId)
+        .then(res => {
+          if (res.success) {
+            setSaasUser(res.data.user);
+            setSaasTool(res.data.tool);
+          }
+        })
+        .catch(err => console.error('SaaS launch failed:', err));
+    }
+  }, [userId, toolId]);
 
   const handleAnalyze = async () => {
     if (!roomImage) {
@@ -62,12 +112,44 @@ export default function App() {
       return;
     }
 
-    setStep(AppStep.RENDERING);
     setLoading(true);
     setError(null);
+
+    // 1. SaaS Verify (Step 2 of 3)
+    if (userId && toolId) {
+      try {
+        const verifyRes = await saasService.verify(userId, toolId);
+        if (!verifyRes.success) {
+          setError(verifyRes.message || "积分不足，无法生成内容。");
+          setLoading(false);
+          return;
+        }
+        // Update user integral from verification if provided
+        if (verifyRes.data.currentIntegral !== undefined) {
+          setSaasUser(prev => prev ? { ...prev, integral: verifyRes.data.currentIntegral } : null);
+        }
+      } catch (err: any) {
+        console.error('SaaS verify failed:', err);
+        // Continue if backend allows宽松校验 (loose validation)
+      }
+    }
+
+    setStep(AppStep.RENDERING);
     setResults({ wide: null, medium: null, closeup: null });
 
-    const config: GenerationConfig = { aspectRatio, imageSize: resolution, customPrompt };
+    // Prompt Merging Logic
+    // Formula: Final Prompt = Internal Style + SaaS Context + SaaS Prompts
+    const mergedPrompt = [
+      customPrompt,
+      saasContext,
+      ...(saasPrompts || [])
+    ].filter(Boolean).join('. ');
+
+    const config: GenerationConfig = { 
+      aspectRatio, 
+      imageSize: resolution, 
+      customPrompt: mergedPrompt 
+    };
 
     try {
       // Sequential generation (one by one)
@@ -79,6 +161,18 @@ export default function App() {
       
       const closeup = await generateCarpetRendering('closeup', roomImage, carpetImage, config, analysis);
       setResults(prev => ({ ...prev, closeup }));
+
+      // 3. SaaS Consume (Step 3 of 3)
+      if (userId && toolId) {
+        try {
+          const consumeRes = await saasService.consume(userId, toolId);
+          if (consumeRes.success) {
+            setSaasUser(prev => prev ? { ...prev, integral: consumeRes.data.currentIntegral } : null);
+          }
+        } catch (err) {
+          console.error('SaaS consume failed:', err);
+        }
+      }
     } catch (err: any) {
       setError(err.message || "生成过程中出错。");
     } finally {
@@ -246,6 +340,19 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-8">
+            {saasUser && (
+              <div className="hidden md:flex items-center gap-4 px-4 py-2 bg-zinc-50 rounded-2xl border border-zinc-100">
+                <div className="flex flex-col items-end">
+                  <span className="text-[10px] font-black text-zinc-900 uppercase leading-none">{saasUser.name}</span>
+                  <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-widest">{saasUser.enterprise}</span>
+                </div>
+                <div className="w-[1px] h-6 bg-zinc-200" />
+                <div className="flex items-center gap-1.5 text-zinc-900">
+                  <Coins size={14} className="text-amber-500" />
+                  <span className="text-xs font-black">{saasUser.integral}</span>
+                </div>
+              </div>
+            )}
             <div className="hidden md:flex gap-8 text-[11px] font-bold uppercase tracking-widest text-zinc-400">
               <a href="#" className="text-zinc-900 border-b-2 border-zinc-900 pb-1">渲染中心</a>
               <a href="#" className="hover:text-zinc-900 transition-colors pb-1">分析引擎</a>
