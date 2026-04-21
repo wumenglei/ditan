@@ -1,18 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { Wand2, Loader2, Maximize, Box, Layers, Sparkles, ChevronRight, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { Wand2, Loader2, Maximize, Box, Layers, Focus, Sparkles, ChevronRight, ImageIcon, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ImageUpload } from './components/ImageUpload';
 import { SettingsPanel } from './components/SettingsPanel';
 import { generateCarpetRendering, GenerationConfig, analyzeRoom, RoomAnalysis } from './lib/gemini';
-import {
-  consumeTool,
-  launchTool,
-  mergePromptWithSaas,
-  normalizeSaasInit,
-  SaasSession,
-  ToolLaunchData,
-  verifyTool,
-} from './lib/saas';
 
 enum AppStep {
   ROOM_UPLOAD = 'ROOM_UPLOAD',
@@ -45,53 +36,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<RenderingResult>({ wide: null, medium: null, closeup: null });
   const [error, setError] = useState<string | null>(null);
-  const [saasSession, setSaasSession] = useState<SaasSession | null>(null);
-  const [launchData, setLaunchData] = useState<ToolLaunchData | null>(null);
-  const [saasLoading, setSaasLoading] = useState(false);
 
   const [fullscreenImage, setFullscreenImage] = useState<{ url: string, title: string } | null>(null);
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const session = normalizeSaasInit(event.data);
-      if (!session) return;
-
-      setSaasSession(session);
-      setError(null);
-    };
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
-
-  useEffect(() => {
-    if (!saasSession) return;
-
-    let cancelled = false;
-
-    const loadLaunchData = async () => {
-      setSaasLoading(true);
-      try {
-        const data = await launchTool(saasSession);
-        if (!cancelled) {
-          setLaunchData(data);
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setError(err.message || '工具启动校验失败。');
-        }
-      } finally {
-        if (!cancelled) {
-          setSaasLoading(false);
-        }
-      }
-    };
-
-    loadLaunchData();
-    return () => {
-      cancelled = true;
-    };
-  }, [saasSession]);
 
   const handleAnalyze = async () => {
     if (!roomImage) {
@@ -116,34 +62,14 @@ export default function App() {
       return;
     }
 
+    setStep(AppStep.RENDERING);
     setLoading(true);
     setError(null);
     setResults({ wide: null, medium: null, closeup: null });
 
-    const config: GenerationConfig = {
-      aspectRatio,
-      imageSize: resolution,
-      customPrompt: mergePromptWithSaas(customPrompt, saasSession),
-    };
+    const config: GenerationConfig = { aspectRatio, imageSize: resolution, customPrompt };
 
     try {
-      if (saasSession) {
-        const verifyData = await verifyTool(saasSession);
-        setLaunchData(prev => ({
-          ...prev,
-          user: {
-            ...prev?.user,
-            integral: verifyData.currentIntegral ?? prev?.user?.integral,
-          },
-          tool: {
-            ...prev?.tool,
-            integral: verifyData.requiredIntegral ?? prev?.tool?.integral,
-          },
-        }));
-      }
-
-      setStep(AppStep.RENDERING);
-
       // Sequential generation (one by one)
       const wide = await generateCarpetRendering('wide', roomImage, carpetImage, config, analysis);
       setResults(prev => ({ ...prev, wide }));
@@ -153,32 +79,8 @@ export default function App() {
       
       const closeup = await generateCarpetRendering('closeup', roomImage, carpetImage, config, analysis);
       setResults(prev => ({ ...prev, closeup }));
-
-      if (saasSession) {
-        const consumeData = await consumeTool(saasSession);
-        setLaunchData(prev => ({
-          ...prev,
-          user: {
-            ...prev?.user,
-            integral: consumeData.currentIntegral ?? prev?.user?.integral,
-          },
-        }));
-
-        if (saasSession.callbackUrl) {
-          window.parent?.postMessage({
-            type: 'SAAS_CONSUME_SUCCESS',
-            userId: saasSession.userId,
-            toolId: saasSession.toolId,
-            currentIntegral: consumeData.currentIntegral,
-            consumedIntegral: consumeData.consumedIntegral,
-          }, '*');
-        }
-      }
     } catch (err: any) {
       setError(err.message || "生成过程中出错。");
-      if (step === AppStep.CARPET_UPLOAD) {
-        setStep(AppStep.CARPET_UPLOAD);
-      }
     } finally {
       setLoading(false);
     }
@@ -351,11 +253,7 @@ export default function App() {
             </div>
             <div className="h-8 w-[1px] bg-zinc-200 hidden md:block" />
             <button className="text-[11px] font-bold uppercase tracking-widest px-6 py-2.5 rounded-full border border-zinc-200 hover:bg-zinc-50 transition-all">
-              {saasLoading
-                ? '账户同步中'
-                : launchData?.user?.integral !== undefined
-                  ? `积分 ${launchData.user.integral}`
-                  : '我的账户'}
+              我的账户
             </button>
           </div>
         </div>
@@ -391,37 +289,16 @@ export default function App() {
                     setCustomPrompt={setCustomPrompt}
                   />
 
-                  {saasSession && (
-                    <div className="p-5 rounded-2xl bg-white border border-zinc-100 shadow-xl shadow-zinc-200/20 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">SaaS 权限</span>
-                        <span className="text-[10px] font-bold text-emerald-600">
-                          {saasLoading ? '同步中' : '已连接'}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3 text-xs font-bold text-zinc-700">
-                        <div className="rounded-xl bg-zinc-50 p-3">
-                          <p className="text-[9px] text-zinc-400 uppercase tracking-widest">当前积分</p>
-                          <p>{launchData?.user?.integral ?? '--'}</p>
-                        </div>
-                        <div className="rounded-xl bg-zinc-50 p-3">
-                          <p className="text-[9px] text-zinc-400 uppercase tracking-widest">本次消耗</p>
-                          <p>{launchData?.tool?.integral ?? '--'}</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
                   <button
                     onClick={handleGenerate}
-                    disabled={loading || saasLoading || !carpetImage}
+                    disabled={loading || !carpetImage}
                     className={`w-full py-4 rounded-2xl flex items-center justify-center gap-2 font-display font-semibold transition-all shadow-xl shadow-zinc-900/20
-                      ${loading || saasLoading || !carpetImage
+                      ${loading || !carpetImage
                         ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
                         : 'bg-zinc-900 text-white hover:bg-zinc-800 hover:scale-[1.02] active:scale-95'}`}
                   >
                     {loading ? <Loader2 className="animate-spin" /> : <Wand2 size={20} />}
-                    {loading ? '正在进行精细化渲染...' : saasSession ? '校验积分并生成效果图' : '同步 AI 生成效果图'}
+                    {loading ? '正在进行精细化渲染...' : '同步 AI 生成效果图'}
                   </button>
 
                   <button 
@@ -493,14 +370,6 @@ export default function App() {
                         已深度对齐 (Aligned)
                       </p>
                     </div>
-                    {saasSession && (
-                      <div className="space-y-1 border-l border-zinc-800 pl-4">
-                        <p className="text-[8px] font-bold text-emerald-500 uppercase tracking-widest">SaaS 任务</p>
-                        <p className="text-[10px] font-bold text-white truncate">
-                          {launchData?.tool?.name || saasSession.toolId}
-                        </p>
-                      </div>
-                    )}
                   </div>
                   <div className="absolute top-0 right-0 p-8 opacity-5">
                     <Box size={100} />
@@ -672,3 +541,4 @@ function RenderCard({ title, image, loading, icon, aspectRatio, description, isL
     </div>
   );
 }
+
