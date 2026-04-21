@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Wand2, Loader2, Maximize, Box, Layers, Focus, Sparkles, ChevronRight, ImageIcon, X, User, Coins } from 'lucide-react';
+import React, { useState } from 'react';
+import { Wand2, Loader2, Maximize, Box, Layers, Focus, Sparkles, ChevronRight, ImageIcon, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ImageUpload } from './components/ImageUpload';
 import { SettingsPanel } from './components/SettingsPanel';
 import { generateCarpetRendering, GenerationConfig, analyzeRoom, RoomAnalysis } from './lib/gemini';
-import { saasService, SaaSUser, SaaSTool } from './services/saasService';
 
 enum AppStep {
   ROOM_UPLOAD = 'ROOM_UPLOAD',
@@ -22,15 +21,6 @@ interface RenderingResult {
 
 export default function App() {
   const [step, setStep] = useState<AppStep>(AppStep.ROOM_UPLOAD);
-  
-  // SaaS States
-  const [userId, setUserId] = useState<string | null>(null);
-  const [toolId, setToolId] = useState<string | null>(null);
-  const [saasUser, setSaasUser] = useState<SaaSUser | null>(null);
-  const [saasTool, setSaasTool] = useState<SaaSTool | null>(null);
-  const [saasContext, setSaasContext] = useState<string | null>(null);
-  const [saasPrompts, setSaasPrompts] = useState<string[]>([]);
-
   const [roomImage, setRoomImage] = useState<string | null>(null);
   const [carpetImage, setCarpetImage] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<RoomAnalysis>({
@@ -49,57 +39,115 @@ export default function App() {
 
   const [fullscreenImage, setFullscreenImage] = useState<{ url: string, title: string } | null>(null);
 
-  // Filter IDs helper
-  const filterId = (id: any): string | null => {
-    if (!id || id === 'null' || id === 'undefined') return null;
-    return String(id);
-  };
+  // SaaS Integration State
+  const [saasData, setSaasData] = useState<{
+    userId?: string;
+    toolId?: string;
+    context?: string;
+    prompt?: string[];
+  }>({});
+  const [userCredits, setUserCredits] = useState<number>(0);
+  const [toolCredits, setToolCredits] = useState<number>(0);
+  const [isSaasReady, setIsSaasReady] = useState(false);
 
-  // Listen for SAAS_INIT
-  useEffect(() => {
+  // postMessage Listener
+  React.useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      const data = event.data;
-      if (data && data.type === 'SAAS_INIT') {
-        const uid = filterId(data.userId);
-        const tid = filterId(data.toolId);
-        if (uid) setUserId(uid);
-        if (tid) setToolId(tid);
-        if (data.context) setSaasContext(data.context);
-        if (Array.isArray(data.prompt)) setSaasPrompts(data.prompt);
-        
-        console.log('SAAS_INIT received:', { uid, tid, context: data.context, prompt: data.prompt });
+      if (event.data?.type === 'SAAS_INIT') {
+        const { userId, toolId, context, prompt } = event.data;
+        if (userId && toolId) {
+          setSaasData({
+            userId,
+            toolId,
+            context: context !== 'null' && context !== 'undefined' ? context : '',
+            prompt: Array.isArray(prompt) ? prompt : []
+          });
+          setIsSaasReady(true);
+        }
       }
     };
-
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  // Launch Effect
-  useEffect(() => {
-    if (userId && toolId) {
-      saasService.launch(userId, toolId)
-        .then(res => {
-          if (res.success) {
-            setSaasUser(res.data.user);
-            setSaasTool(res.data.tool);
+  // Launch API
+  React.useEffect(() => {
+    if (isSaasReady && saasData.userId && saasData.toolId) {
+      const launchTool = async () => {
+        try {
+          const response = await fetch('/api/tool/launch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
+          });
+          const result = await response.json();
+          if (result.success) {
+            setUserCredits(result.data.user.integral);
+            setToolCredits(result.data.tool.integral);
           }
-        })
-        .catch(err => console.error('SaaS launch failed:', err));
+        } catch (err) {
+          console.error("SaaS Launch failed:", err);
+        }
+      };
+      launchTool();
     }
-  }, [userId, toolId]);
+  }, [isSaasReady, saasData.userId, saasData.toolId]);
+
+  const verifyCredits = async () => {
+    if (!saasData.userId || !saasData.toolId) return true; // Bypass if not in SaaS env
+    try {
+      const response = await fetch('/api/tool/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
+      });
+      const result = await response.json();
+      if (!result.success) {
+        setError(result.message || "积分不足");
+        return false;
+      }
+      return true;
+    } catch (err: any) {
+      setError("校验失败: " + err.message);
+      return false;
+    }
+  };
+
+  const consumeCredits = async () => {
+    if (!saasData.userId || !saasData.toolId) return;
+    try {
+      const response = await fetch('/api/tool/consume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setUserCredits(result.data.currentIntegral);
+      }
+    } catch (err) {
+      console.error("SaaS Consumption failed:", err);
+    }
+  };
 
   const handleAnalyze = async () => {
     if (!roomImage) {
       setError("请上传房间参考图。");
       return;
     }
+
+    // Step 2: Verify
+    const hasCredits = await verifyCredits();
+    if (!hasCredits) return;
+
     setStep(AppStep.ANALYZING);
     setError(null);
     try {
       const result = await analyzeRoom(roomImage);
       setAnalysis(result);
       setStep(AppStep.PARAM_EDITING);
+      // Step 3: Consume
+      await consumeCredits();
     } catch (err: any) {
       setError(err.message);
       setStep(AppStep.ROOM_UPLOAD);
@@ -112,67 +160,39 @@ export default function App() {
       return;
     }
 
+    setStep(AppStep.RENDERING);
     setLoading(true);
     setError(null);
-
-    // 1. SaaS Verify (Step 2 of 3)
-    if (userId && toolId) {
-      try {
-        const verifyRes = await saasService.verify(userId, toolId);
-        if (!verifyRes.success) {
-          setError(verifyRes.message || "积分不足，无法生成内容。");
-          setLoading(false);
-          return;
-        }
-        // Update user integral from verification if provided
-        if (verifyRes.data.currentIntegral !== undefined) {
-          setSaasUser(prev => prev ? { ...prev, integral: verifyRes.data.currentIntegral } : null);
-        }
-      } catch (err: any) {
-        console.error('SaaS verify failed:', err);
-        // Continue if backend allows宽松校验 (loose validation)
-      }
-    }
-
-    setStep(AppStep.RENDERING);
     setResults({ wide: null, medium: null, closeup: null });
 
-    // Prompt Merging Logic
-    // Formula: Final Prompt = Internal Style + SaaS Context + SaaS Prompts
-    const mergedPrompt = [
-      customPrompt,
-      saasContext,
-      ...(saasPrompts || [])
-    ].filter(Boolean).join('. ');
+    const config: GenerationConfig = { aspectRatio, imageSize: resolution, customPrompt };
 
-    const config: GenerationConfig = { 
-      aspectRatio, 
-      imageSize: resolution, 
-      customPrompt: mergedPrompt 
-    };
+    // Step 2: Verify
+    const hasCredits = await verifyCredits();
+    if (!hasCredits) {
+      setLoading(false);
+      return;
+    }
 
     try {
+      // Create context-aware prompts by merging SaaS context if available
+      const mergedConfig = {
+        ...config,
+        customPrompt: `${saasData.context ? `背景: ${saasData.context}\n` : ''}${saasData.prompt?.length ? `关键词: ${saasData.prompt.join(', ')}\n` : ''}${customPrompt}`
+      };
+
       // Sequential generation (one by one)
-      const wide = await generateCarpetRendering('wide', roomImage, carpetImage, config, analysis);
+      const wide = await generateCarpetRendering('wide', roomImage, carpetImage, mergedConfig, analysis);
       setResults(prev => ({ ...prev, wide }));
       
-      const medium = await generateCarpetRendering('medium', roomImage, carpetImage, config, analysis);
+      const medium = await generateCarpetRendering('medium', roomImage, carpetImage, mergedConfig, analysis);
       setResults(prev => ({ ...prev, medium }));
       
-      const closeup = await generateCarpetRendering('closeup', roomImage, carpetImage, config, analysis);
+      const closeup = await generateCarpetRendering('closeup', roomImage, carpetImage, mergedConfig, analysis);
       setResults(prev => ({ ...prev, closeup }));
 
-      // 3. SaaS Consume (Step 3 of 3)
-      if (userId && toolId) {
-        try {
-          const consumeRes = await saasService.consume(userId, toolId);
-          if (consumeRes.success) {
-            setSaasUser(prev => prev ? { ...prev, integral: consumeRes.data.currentIntegral } : null);
-          }
-        } catch (err) {
-          console.error('SaaS consume failed:', err);
-        }
-      }
+      // Step 3: Consume
+      await consumeCredits();
     } catch (err: any) {
       setError(err.message || "生成过程中出错。");
     } finally {
@@ -339,21 +359,14 @@ export default function App() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-8">
-            {saasUser && (
-              <div className="hidden md:flex items-center gap-4 px-4 py-2 bg-zinc-50 rounded-2xl border border-zinc-100">
-                <div className="flex flex-col items-end">
-                  <span className="text-[10px] font-black text-zinc-900 uppercase leading-none">{saasUser.name}</span>
-                  <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-widest">{saasUser.enterprise}</span>
+            <div className="flex items-center gap-8">
+              {saasData.userId && (
+                <div className="flex flex-col items-end mr-4">
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">我的积分</span>
+                  <span className="text-sm font-black text-zinc-900">{userCredits}</span>
                 </div>
-                <div className="w-[1px] h-6 bg-zinc-200" />
-                <div className="flex items-center gap-1.5 text-zinc-900">
-                  <Coins size={14} className="text-amber-500" />
-                  <span className="text-xs font-black">{saasUser.integral}</span>
-                </div>
-              </div>
-            )}
-            <div className="hidden md:flex gap-8 text-[11px] font-bold uppercase tracking-widest text-zinc-400">
+              )}
+              <div className="hidden md:flex gap-8 text-[11px] font-bold uppercase tracking-widest text-zinc-400">
               <a href="#" className="text-zinc-900 border-b-2 border-zinc-900 pb-1">渲染中心</a>
               <a href="#" className="hover:text-zinc-900 transition-colors pb-1">分析引擎</a>
               <a href="#" className="hover:text-zinc-900 transition-colors pb-1">灵感库</a>

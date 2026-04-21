@@ -1,8 +1,8 @@
 import express from "express";
 import axios from "axios";
+import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createServer as createViteServer } from "vite";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,13 +13,13 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
-  // CORS and Security Policies for SaaS embedding
+  // CORS and Iframe permissions
   app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.setHeader("Content-Security-Policy", "frame-ancestors *");
-
+    
     if (req.method === 'OPTIONS') {
       res.status(200).end();
       return;
@@ -29,6 +29,7 @@ async function startServer() {
 
   const proxyRequest = async (req: express.Request, res: express.Response, targetPath: string) => {
     const targetUrl = `http://aibigtree.com${targetPath}`;
+    console.log(`Proxying ${req.method} request to: ${targetUrl}`);
     try {
       const response = await axios({
         method: req.method,
@@ -39,23 +40,14 @@ async function startServer() {
       res.status(response.status).json(response.data);
     } catch (error: any) {
       console.error(`Proxy error for ${targetPath}:`, error.message);
-      res.status(500).json({ 
-        success: false, 
-        message: "代理转发失败",
-        error: error.message 
-      });
+      res.status(500).json({ error: "代理转发失败", details: error.message });
     }
   };
 
-  // SaaS Proxy Routes
+  // SaaS API Proxy Routes
   app.post("/api/tool/launch", (req, res) => proxyRequest(req, res, "/api/tool/launch"));
   app.post("/api/tool/verify", (req, res) => proxyRequest(req, res, "/api/tool/verify"));
   app.post("/api/tool/consume", (req, res) => proxyRequest(req, res, "/api/tool/consume"));
-
-  // Health check
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
-  });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
@@ -77,6 +69,4 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error("Server failed to start:", err);
-});
+startServer();

@@ -81,7 +81,7 @@ app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Content-Security-Policy", "frame-ancestors *");
-
+  
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
@@ -145,6 +145,6 @@ window.postMessage({
 ---
 
 ## 5. 常见问题与复用指南
-*   **去掉校验**: 前端已改为“宽松校验”，只要后端返回 `200 OK`且包含 `success: true` 或 `valid: true` 即可通过。
+*   **去掉校验**: 前端已改为“宽松校验”，只要后端返回 `200 OK` 且包含 `success: true` 或 `valid: true` 即可通过。
 *   **去掉限制**: 代理层已配置 `Access-Control-Allow-Origin: *` 和 `frame-ancestors *`，支持任何域名嵌入。
 *   **复用方法**: 以后新项目只需拷贝 `api/proxy.ts` 和 `vercel.json` 即可快速搭建代理环境。
