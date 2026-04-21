@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { Wand2, Loader2, Maximize, Box, Layers, Focus, Sparkles, ChevronRight, ImageIcon, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Wand2, Loader2, Maximize, Box, Layers, Focus, Sparkles, ChevronRight, ImageIcon, X, Wallet } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ImageUpload } from './components/ImageUpload';
 import { SettingsPanel } from './components/SettingsPanel';
 import { generateCarpetRendering, GenerationConfig, analyzeRoom, RoomAnalysis } from './lib/gemini';
+import { launchTool, verifyIntegral, consumeIntegral } from './services/saasService';
 
 enum AppStep {
   ROOM_UPLOAD = 'ROOM_UPLOAD',
@@ -39,6 +40,57 @@ export default function App() {
 
   const [fullscreenImage, setFullscreenImage] = useState<{ url: string, title: string } | null>(null);
 
+  // SaaS State
+  const [saasConfig, setSaasConfig] = useState<{
+    userId: string | null;
+    toolId: string | null;
+    userName: string | null;
+    integral: number;
+    requiredIntegral: number;
+    saasPrompt: string;
+  }>({
+    userId: null,
+    toolId: null,
+    userName: null,
+    integral: 0,
+    requiredIntegral: 0,
+    saasPrompt: '',
+  });
+
+  // Listen for SaaS Initialization
+  useEffect(() => {
+    const handleSaaSInit = async (event: MessageEvent) => {
+      if (event.data?.type === 'SAAS_INIT') {
+        const { userId, toolId, context, prompt } = event.data;
+        
+        // Filter "null" or "undefined" strings
+        const cleanUserId = userId === 'null' || userId === 'undefined' ? null : userId;
+        const cleanToolId = toolId === 'null' || toolId === 'undefined' ? null : toolId;
+
+        if (cleanUserId && cleanToolId) {
+          try {
+            const res = await launchTool(cleanUserId, cleanToolId);
+            if (res.success && res.data) {
+              setSaasConfig({
+                userId: cleanUserId,
+                toolId: cleanToolId,
+                userName: res.data.user.name,
+                integral: res.data.user.integral,
+                requiredIntegral: res.data.tool.integral,
+                saasPrompt: `${context || ''} ${Array.isArray(prompt) ? prompt.join(' ') : ''}`.trim(),
+              });
+            }
+          } catch (err) {
+            console.error('SaaS Auth Failed', err);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('message', handleSaaSInit);
+    return () => window.removeEventListener('message', handleSaaSInit);
+  }, []);
+
   const handleAnalyze = async () => {
     if (!roomImage) {
       setError("请上传房间参考图。");
@@ -67,18 +119,37 @@ export default function App() {
     setError(null);
     setResults({ wide: null, medium: null, closeup: null });
 
-    const config: GenerationConfig = { aspectRatio, imageSize: resolution, customPrompt };
+    // Final Prompt merging
+    const mergedPrompt = `${saasConfig.saasPrompt} ${customPrompt}`.trim();
+    const config: GenerationConfig = { aspectRatio, imageSize: resolution, customPrompt: mergedPrompt };
+
+    const viewTypes: Array<keyof RenderingResult> = ['wide', 'medium', 'closeup'];
 
     try {
-      // Sequential generation (one by one)
-      const wide = await generateCarpetRendering('wide', roomImage, carpetImage, config, analysis);
-      setResults(prev => ({ ...prev, wide }));
-      
-      const medium = await generateCarpetRendering('medium', roomImage, carpetImage, config, analysis);
-      setResults(prev => ({ ...prev, medium }));
-      
-      const closeup = await generateCarpetRendering('closeup', roomImage, carpetImage, config, analysis);
-      setResults(prev => ({ ...prev, closeup }));
+      for (const view of viewTypes) {
+        // 1. Verify Integral (if SaaS configured)
+        if (saasConfig.userId && saasConfig.toolId) {
+          const verify = await verifyIntegral(saasConfig.userId, saasConfig.toolId);
+          if (!verify.success) {
+            throw new Error(verify.message || "积分不足，无法继续生成。");
+          }
+        }
+
+        // 2. Generate
+        const result = await generateCarpetRendering(view, roomImage, carpetImage, config, analysis);
+        setResults(prev => ({ ...prev, [view]: result }));
+        
+        // 3. Consume Integral (if SaaS configured)
+        if (saasConfig.userId && saasConfig.toolId) {
+          const consume = await consumeIntegral(saasConfig.userId, saasConfig.toolId);
+          if (consume.success && consume.data) {
+            setSaasConfig(prev => ({ 
+              ...prev, 
+              integral: consume.data?.currentIntegral ?? prev.integral 
+            }));
+          }
+        }
+      }
     } catch (err: any) {
       setError(err.message || "生成过程中出错。");
     } finally {
@@ -246,6 +317,17 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-8">
+            {saasConfig.userId && (
+              <div className="flex items-center gap-4 px-4 py-2 bg-zinc-50 rounded-2xl border border-zinc-100">
+                <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center text-white">
+                  <Wallet size={14} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">可用积分</p>
+                  <p className="text-sm font-display font-bold text-zinc-900">{saasConfig.integral}</p>
+                </div>
+              </div>
+            )}
             <div className="hidden md:flex gap-8 text-[11px] font-bold uppercase tracking-widest text-zinc-400">
               <a href="#" className="text-zinc-900 border-b-2 border-zinc-900 pb-1">渲染中心</a>
               <a href="#" className="hover:text-zinc-900 transition-colors pb-1">分析引擎</a>
