@@ -32,7 +32,7 @@ Output ONLY the raw JSON.`;
         parts: [
           {
             inlineData: {
-              data: roomImageBase64.split(',')[1] || roomImageBase64,
+              data: roomImageBase64,
               mimeType: "image/jpeg"
             }
           },
@@ -133,13 +133,13 @@ Generate the rendering now.`;
         parts: [
           {
             inlineData: {
-              data: roomImageBase64.split(',')[1] || roomImageBase64,
+              data: roomImageBase64,
               mimeType: "image/jpeg"
             }
           },
           {
             inlineData: {
-              data: carpetImageBase64.split(',')[1] || carpetImageBase64,
+              data: carpetImageBase64,
               mimeType: "image/jpeg"
             }
           },
