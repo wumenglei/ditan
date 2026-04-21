@@ -80,6 +80,13 @@ export default function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
           });
+          
+          if (!response.ok) {
+            const text = await response.text();
+            console.warn("SaaS Launch failed with status:", response.status, text.substring(0, 100));
+            return;
+          }
+
           const result = await response.json();
           if (result.success) {
             setUserCredits(result.data.user.integral);
@@ -101,6 +108,15 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
       });
+      
+      const contentType = response.headers.get("content-type");
+      if (!response.ok || !contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Non-JSON or Error response from verify:", text.substring(0, 100));
+        setError("服务器响应错误: 无法获取积分信息 (非JSON数据)");
+        return false;
+      }
+
       const result = await response.json();
       if (!result.success) {
         setError(result.message || "积分不足");
@@ -108,6 +124,7 @@ export default function App() {
       }
       return true;
     } catch (err: any) {
+      console.error("Verify credits error:", err);
       setError("校验失败: " + err.message);
       return false;
     }
@@ -121,9 +138,15 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
       });
-      const result = await response.json();
-      if (result.success) {
-        setUserCredits(result.data.currentIntegral);
+      
+      if (response.ok) {
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const result = await response.json();
+          if (result.success) {
+            setUserCredits(result.data.currentIntegral);
+          }
+        }
       }
     } catch (err) {
       console.error("SaaS Consumption failed:", err);
