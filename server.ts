@@ -24,7 +24,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// SaaS Proxy Logic (from API_SPEC (1)-1.md)
+// SaaS Proxy Logic
 const proxyRequest = async (req: express.Request, res: express.Response, targetPath: string) => {
   const saasBaseUrl = process.env.SAAS_BASE_URL || "http://aibigtree.com";
   const targetUrl = `${saasBaseUrl}${targetPath}`;

@@ -66,7 +66,7 @@ export default function App() {
       if (event.data?.type === 'SAAS_INIT') {
         const { userId, toolId, context, prompt } = event.data;
         
-        // Convert to string and filter placeholders
+        // Filter "null" or "undefined" strings
         const cleanUserId = userId ? String(userId) : null;
         const cleanToolId = toolId ? String(toolId) : null;
 
@@ -99,6 +99,24 @@ export default function App() {
       setError("请上传房间参考图。");
       return;
     }
+
+    // SaaS Integral Check before Analysis
+    if (saasConfig.userId && saasConfig.toolId) {
+      setLoading(true);
+      try {
+        const verify = await verifyIntegral(saasConfig.userId, saasConfig.toolId);
+        if (!verify.success) {
+          setError(verify.message || "积分不足，无法开始分析。");
+          setLoading(false);
+          return;
+        }
+      } catch (err) {
+        console.error('Verify failed during analysis', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
     setStep(AppStep.ANALYZING);
     setError(null);
     try {
@@ -151,7 +169,6 @@ export default function App() {
               integral: consume.data?.currentIntegral ?? prev.integral 
             }));
           } else {
-            // If consumption fails after image generation, we should at least log it very clearly
             console.error('积分扣除失败响应:', consume);
             setError(`图片已生成，但积分扣除失败: ${consume.message || '未知错误'}`);
           }

@@ -1,6 +1,5 @@
 /**
  * SaaS 积分校验与扣除服务
- * 遵循 API_SPEC (1)-1.md 规范
  */
 
 export interface SaasResponse<T = any> {
