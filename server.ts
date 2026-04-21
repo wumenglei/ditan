@@ -11,13 +11,14 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '50mb' }));
 
   // CORS and Iframe permissions
   app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    // Standard CSP for allowing iframes - though Cloud Run might have its own
     res.setHeader("Content-Security-Policy", "frame-ancestors *");
     
     if (req.method === 'OPTIONS') {
@@ -28,48 +29,31 @@ async function startServer() {
   });
 
   const proxyRequest = async (req: express.Request, res: express.Response, targetPath: string) => {
-    // Try https first, as many SaaS backends now enforce it
-    const targetUrl = `https://aibigtree.com${targetPath}`;
-    console.log(`Proxying ${req.method} request to: ${targetUrl}`);
+    const targetUrl = `http://aibigtree.com${targetPath}`;
     try {
+      console.log(`Proxying ${req.method} request to ${targetUrl}`);
       const response = await axios({
         method: req.method,
         url: targetUrl,
         data: req.body,
         headers: { 
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          // Add any specific headers if required by the target
         },
         timeout: 10000 // 10s timeout
       });
-
-      // Ensure we send back JSON
-      if (typeof response.data === 'string' && response.data.trim().startsWith('<')) {
-        console.warn(`Target ${targetUrl} returned HTML instead of JSON`);
-        return res.status(502).json({ 
-          error: "后端服务返回了非JSON数据 (HTML)", 
-          details: "目标服务器可能维护中或地址有误" 
-        });
-      }
-
       res.status(response.status).json(response.data);
     } catch (error: any) {
-      console.error(`Proxy error for ${targetPath}:`, error.message);
-      
-      // If https failed, maybe try http as fallback? 
-      // But usually it's better to tell the user the specific error.
-      const status = error.response?.status || 500;
-      const errorData = error.response?.data;
-
-      res.status(status).json({ 
-        error: "代理转发失败", 
-        message: error.message,
-        details: typeof errorData === 'object' ? errorData : "服务器返回了错误页面"
-      });
+      console.error(`Proxy error for ${targetUrl}:`, error.message);
+      if (error.response) {
+        res.status(error.response.status).json(error.response.data);
+      } else {
+        res.status(500).json({ error: "代理转发失败", details: error.message });
+      }
     }
   };
 
-  // SaaS API Proxy Routes
+  // SaaS Proxy Routes
   app.post("/api/tool/launch", (req, res) => proxyRequest(req, res, "/api/tool/launch"));
   app.post("/api/tool/verify", (req, res) => proxyRequest(req, res, "/api/tool/verify"));
   app.post("/api/tool/consume", (req, res) => proxyRequest(req, res, "/api/tool/consume"));

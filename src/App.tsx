@@ -37,140 +37,89 @@ export default function App() {
   const [results, setResults] = useState<RenderingResult>({ wide: null, medium: null, closeup: null });
   const [error, setError] = useState<string | null>(null);
 
+  // SaaS Integration State
+  const [saasInfo, setSaasInfo] = useState<{
+    userId: string | null;
+    toolId: string | null;
+    context: string | null;
+    prompt: string[] | null;
+    userName: string | null;
+    enterprise: string | null;
+    userIntegral: number | null;
+    toolRequiredIntegral: number | null;
+  }>({
+    userId: null,
+    toolId: null,
+    context: null,
+    prompt: null,
+    userName: null,
+    enterprise: null,
+    userIntegral: null,
+    toolRequiredIntegral: null,
+  });
+
   const [fullscreenImage, setFullscreenImage] = useState<{ url: string, title: string } | null>(null);
 
-  // SaaS Integration State
-  const [saasData, setSaasData] = useState<{
-    userId?: string;
-    toolId?: string;
-    context?: string;
-    prompt?: string[];
-  }>({});
-  const [userCredits, setUserCredits] = useState<number>(0);
-  const [toolCredits, setToolCredits] = useState<number>(0);
-  const [isSaasReady, setIsSaasReady] = useState(false);
-
-  // postMessage Listener
+  // Listen for SaaS initialization message
   React.useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'SAAS_INIT') {
-        const { userId, toolId, context, prompt } = event.data;
-        if (userId && toolId) {
-          setSaasData({
-            userId,
-            toolId,
-            context: context !== 'null' && context !== 'undefined' ? context : '',
-            prompt: Array.isArray(prompt) ? prompt : []
-          });
-          setIsSaasReady(true);
-        }
+      const data = event.data;
+      if (data && data.type === 'SAAS_INIT') {
+        console.log('Received SAAS_INIT:', data);
+        setSaasInfo(prev => ({
+          ...prev,
+          userId: data.userId !== "null" && data.userId !== "undefined" ? data.userId : null,
+          toolId: data.toolId !== "null" && data.toolId !== "undefined" ? data.toolId : null,
+          context: data.context !== "null" && data.context !== "undefined" ? data.context : null,
+          prompt: Array.isArray(data.prompt) ? data.prompt : null,
+        }));
       }
     };
+
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  // Launch API
+  // Launch Phase: Get initial user and tool info
   React.useEffect(() => {
-    if (isSaasReady && saasData.userId && saasData.toolId) {
-      const launchTool = async () => {
-        try {
-          const response = await fetch('/api/tool/launch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
-          });
-          
-          if (!response.ok) {
-            const text = await response.text();
-            console.warn("SaaS Launch failed with status:", response.status, text.substring(0, 100));
-            return;
-          }
+    const launchTool = async () => {
+      if (!saasInfo.userId || !saasInfo.toolId) return;
 
-          const result = await response.json();
-          if (result.success) {
-            setUserCredits(result.data.user.integral);
-            setToolCredits(result.data.tool.integral);
-          }
-        } catch (err) {
-          console.error("SaaS Launch failed:", err);
+      try {
+        const response = await fetch('/api/tool/launch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: saasInfo.userId, toolId: saasInfo.toolId }),
+        });
+        const result = await response.json();
+        if (result.success) {
+          setSaasInfo(prev => ({
+            ...prev,
+            userName: result.data.user.name,
+            enterprise: result.data.user.enterprise,
+            userIntegral: result.data.user.integral,
+            toolRequiredIntegral: result.data.tool.integral,
+          }));
         }
-      };
-      launchTool();
-    }
-  }, [isSaasReady, saasData.userId, saasData.toolId]);
-
-  const verifyCredits = async () => {
-    if (!saasData.userId || !saasData.toolId) return true; // Bypass if not in SaaS env
-    try {
-      const response = await fetch('/api/tool/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
-      });
-      
-      const contentType = response.headers.get("content-type");
-      if (!response.ok || !contentType || !contentType.includes("application/json")) {
-        const text = await response.text();
-        console.error("Non-JSON or Error response from verify:", text.substring(0, 100));
-        setError("服务器响应错误: 无法获取积分信息 (非JSON数据)");
-        return false;
+      } catch (err) {
+        console.error('Launch failed:', err);
       }
+    };
 
-      const result = await response.json();
-      if (!result.success) {
-        setError(result.message || "积分不足");
-        return false;
-      }
-      return true;
-    } catch (err: any) {
-      console.error("Verify credits error:", err);
-      setError("校验失败: " + err.message);
-      return false;
-    }
-  };
-
-  const consumeCredits = async () => {
-    if (!saasData.userId || !saasData.toolId) return;
-    try {
-      const response = await fetch('/api/tool/consume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
-      });
-      
-      if (response.ok) {
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          const result = await response.json();
-          if (result.success) {
-            setUserCredits(result.data.currentIntegral);
-          }
-        }
-      }
-    } catch (err) {
-      console.error("SaaS Consumption failed:", err);
-    }
-  };
+    launchTool();
+  }, [saasInfo.userId, saasInfo.toolId]);
 
   const handleAnalyze = async () => {
     if (!roomImage) {
       setError("请上传房间参考图。");
       return;
     }
-
-    // Step 2: Verify
-    const hasCredits = await verifyCredits();
-    if (!hasCredits) return;
-
     setStep(AppStep.ANALYZING);
     setError(null);
     try {
       const result = await analyzeRoom(roomImage);
       setAnalysis(result);
       setStep(AppStep.PARAM_EDITING);
-      // Step 3: Consume
-      await consumeCredits();
     } catch (err: any) {
       setError(err.message);
       setStep(AppStep.ROOM_UPLOAD);
@@ -183,39 +132,69 @@ export default function App() {
       return;
     }
 
-    setStep(AppStep.RENDERING);
     setLoading(true);
     setError(null);
-    setResults({ wide: null, medium: null, closeup: null });
 
-    const config: GenerationConfig = { aspectRatio, imageSize: resolution, customPrompt };
-
-    // Step 2: Verify
-    const hasCredits = await verifyCredits();
-    if (!hasCredits) {
-      setLoading(false);
-      return;
+    // Verify Phase: Check integral before starting
+    try {
+      if (saasInfo.userId && saasInfo.toolId) {
+        const verifyResponse = await fetch('/api/tool/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: saasInfo.userId, toolId: saasInfo.toolId }),
+        });
+        const verifyResult = await verifyResponse.json();
+        if (!verifyResult.success) {
+          setError(verifyResult.message || "积分不足，无法生成。");
+          setLoading(false);
+          return;
+        }
+        // Update current integral from verify response if available
+        if (verifyResult.data?.currentIntegral !== undefined) {
+          setSaasInfo(prev => ({ ...prev, userIntegral: verifyResult.data.currentIntegral }));
+        }
+      }
+    } catch (err) {
+      console.warn('Verify failed, proceeding anyway due to loose validation strategy:', err);
     }
 
-    try {
-      // Create context-aware prompts by merging SaaS context if available
-      const mergedConfig = {
-        ...config,
-        customPrompt: `${saasData.context ? `背景: ${saasData.context}\n` : ''}${saasData.prompt?.length ? `关键词: ${saasData.prompt.join(', ')}\n` : ''}${customPrompt}`
-      };
+    setStep(AppStep.RENDERING);
+    setResults({ wide: null, medium: null, closeup: null });
 
+    const config: GenerationConfig = { 
+      aspectRatio, 
+      imageSize: resolution, 
+      customPrompt: saasInfo.context ? `${saasInfo.context}. ${customPrompt}` : customPrompt,
+      saasPrompt: saasInfo.prompt || undefined
+    };
+
+    try {
       // Sequential generation (one by one)
-      const wide = await generateCarpetRendering('wide', roomImage, carpetImage, mergedConfig, analysis);
+      const wide = await generateCarpetRendering('wide', roomImage, carpetImage, config, analysis);
       setResults(prev => ({ ...prev, wide }));
       
-      const medium = await generateCarpetRendering('medium', roomImage, carpetImage, mergedConfig, analysis);
+      const medium = await generateCarpetRendering('medium', roomImage, carpetImage, config, analysis);
       setResults(prev => ({ ...prev, medium }));
       
-      const closeup = await generateCarpetRendering('closeup', roomImage, carpetImage, mergedConfig, analysis);
+      const closeup = await generateCarpetRendering('closeup', roomImage, carpetImage, config, analysis);
       setResults(prev => ({ ...prev, closeup }));
 
-      // Step 3: Consume
-      await consumeCredits();
+      // Consume Phase: Deduct integral after successful generation
+      if (saasInfo.userId && saasInfo.toolId) {
+        try {
+          const consumeResponse = await fetch('/api/tool/consume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: saasInfo.userId, toolId: saasInfo.toolId }),
+          });
+          const consumeResult = await consumeResponse.json();
+          if (consumeResult.success && consumeResult.data?.currentIntegral !== undefined) {
+            setSaasInfo(prev => ({ ...prev, userIntegral: consumeResult.data.currentIntegral }));
+          }
+        } catch (err) {
+          console.error('Consume failed:', err);
+        }
+      }
     } catch (err: any) {
       setError(err.message || "生成过程中出错。");
     } finally {
@@ -383,13 +362,16 @@ export default function App() {
             </div>
           </div>
             <div className="flex items-center gap-8">
-              {saasData.userId && (
-                <div className="flex flex-col items-end mr-4">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">我的积分</span>
-                  <span className="text-sm font-black text-zinc-900">{userCredits}</span>
-                </div>
-              )}
-              <div className="hidden md:flex gap-8 text-[11px] font-bold uppercase tracking-widest text-zinc-400">
+            {saasInfo.userName && (
+              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-zinc-100 rounded-full">
+                <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{saasInfo.userName}</span>
+                <div className="w-[1px] h-2 bg-zinc-200" />
+                <span className="text-[10px] font-black text-zinc-900 uppercase tracking-widest">
+                  积分: {saasInfo.userIntegral ?? 0}
+                </span>
+              </div>
+            )}
+            <div className="hidden md:flex gap-8 text-[11px] font-bold uppercase tracking-widest text-zinc-400">
               <a href="#" className="text-zinc-900 border-b-2 border-zinc-900 pb-1">渲染中心</a>
               <a href="#" className="hover:text-zinc-900 transition-colors pb-1">分析引擎</a>
               <a href="#" className="hover:text-zinc-900 transition-colors pb-1">灵感库</a>

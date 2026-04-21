@@ -6,6 +6,7 @@ export interface GenerationConfig {
   aspectRatio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9";
   imageSize: "1K" | "2K" | "4K";
   customPrompt?: string;
+  saasPrompt?: string[];
 }
 
 export interface RoomAnalysis {
@@ -122,6 +123,7 @@ IMAGE QUALITY IS TOP PRIORITY: Produce the sharpest, clearest, and most realisti
 4. ARTISTIC CONSTRAINTS:
 - CARPET INTEGRITY: The provided carpet pattern must remain 100% UNCHANGED.
 - VIEW SPECIFIC: ${prompts[viewType]}
+${config.saasPrompt && config.saasPrompt.length > 0 ? `\n- ADDITIONAL KEYWORDS: ${config.saasPrompt.join(", ")}` : ""}
 ${config.customPrompt ? `\nIMPORTANT USER OVERRIDE: ${config.customPrompt}. If this request involves people or specific subjects, prioritize their complete and natural framing above all other view-specific constraints. Ensure maximum sharpness for the subjects.` : ""}
 
 Generate the rendering now.`;
